@@ -24,14 +24,14 @@ builds:
         goarch: arm64
 
 archives:
-  - format: tar.gz
+  - formats: [tar.gz]
     # this name template makes the tarballs look like 
     # project-name_1.0.0_linux_amd64.tar.gz
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
 
 checksum:
   name_template: 'checksums.txt'
