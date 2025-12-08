@@ -259,6 +259,10 @@ curl -X PUT \
   http://localhost:8080/openfeature/v0/manifest/flags/new-feature
 ```
 
+## Release Automation
+
+This repository uses [release-please](https://github.com/googleapis/release-please) to automate changelog and tag management. The workflow defined in `.github/workflows/release-please.yml` requires a token with permission to create pull requests. Add a classic Personal Access Token (or GitHub App token) with `repo` and `workflow` scopes as the `RELEASE_PLEASE_TOKEN` repository secret so the automation can open release PRs.
+
 ## Contributing
 
 1. Fork the repository
