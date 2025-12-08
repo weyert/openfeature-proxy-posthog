@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.0](https://github.com/weyert/openfeature-proxy-posthog/compare/v1.0.0...v1.1.0) (2025-12-08)
+
+
+### Features
+
+* sync manifest metadata with posthog tags ([63742d5](https://github.com/weyert/openfeature-proxy-posthog/commit/63742d5634d6f4eaaf82af2731a8a38c094014bb))
+* sync manifest metadata with PostHog tags ([efc7f72](https://github.com/weyert/openfeature-proxy-posthog/commit/efc7f7254aa57cc687373fbfabb92d7e49a2a217))
+
 ## 1.0.0 (2025-12-08)
 
 
