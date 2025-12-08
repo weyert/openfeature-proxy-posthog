@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/openfeature/posthog-proxy/internal/models"
@@ -20,7 +21,7 @@ func TestUpdateFlag_Success_BasicUpdate(t *testing.T) {
 		if r.Method == http.MethodGet {
 			// GET request to find flag by key - return single flag object
 			assert.Equal(t, "/api/projects/123/feature_flags/test-flag/", r.URL.Path)
-			
+
 			response := models.PostHogFeatureFlag{
 				ID:     1,
 				Key:    "test-flag",
@@ -135,7 +136,7 @@ func TestUpdateFlag_Success_UpdateVariants(t *testing.T) {
 
 			assert.NotNil(t, reqBody.Filters)
 			assert.NotNil(t, reqBody.Filters.Multivariate)
-			
+
 			// Verify weights sum to 100
 			totalWeight := 0
 			for _, variant := range reqBody.Filters.Multivariate.Variants {
@@ -144,10 +145,10 @@ func TestUpdateFlag_Success_UpdateVariants(t *testing.T) {
 			assert.Equal(t, 100, totalWeight)
 
 			response := models.PostHogFeatureFlag{
-				ID:     2,
-				Key:    "variant-flag",
-				Name:   "Variant Flag",
-				Active: true,
+				ID:      2,
+				Key:     "variant-flag",
+				Name:    "Variant Flag",
+				Active:  true,
 				Filters: *reqBody.Filters,
 			}
 
@@ -192,6 +193,143 @@ func TestUpdateFlag_Success_UpdateVariants(t *testing.T) {
 	assert.Equal(t, "variant-flag", response.Flag.Key)
 	assert.NotNil(t, response.Flag.Variants)
 	assert.Len(t, response.Flag.Variants, 4)
+}
+
+func TestUpdateFlag_UpdateExpiry(t *testing.T) {
+	existingTag := "2025-01-01T00:00:00Z"
+	newExpiry := time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC)
+	rollout := 100
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			response := models.PostHogFeatureFlag{
+				ID:   5,
+				Key:  "expiry-flag",
+				Name: "Expiry Flag",
+				Tags: []string{"team:core", "expiry:" + existingTag},
+				Filters: models.PostHogFilters{
+					Groups: []models.PostHogFilterGroup{{RolloutPercentage: &rollout}},
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		case http.MethodPatch:
+			var reqBody models.PostHogUpdateFlagRequest
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
+
+			require.NotNil(t, reqBody.Tags)
+			assert.Equal(t, []string{"team:core", "expiry:2025-12-31T00:00:00Z"}, *reqBody.Tags)
+
+			response := models.PostHogFeatureFlag{
+				ID:   5,
+				Key:  "expiry-flag",
+				Name: "Expiry Flag",
+				Tags: *reqBody.Tags,
+				Filters: models.PostHogFilters{
+					Groups: []models.PostHogFilterGroup{{RolloutPercentage: &rollout}},
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		default:
+			http.Error(w, "unsupported method", http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+
+	handler := setupTestHandler(t, server)
+
+	reqBody := models.UpdateFlagRequest{
+		Expiry: &models.NullableTime{Value: &newExpiry},
+	}
+
+	body, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{gin.Param{Key: "key", Value: "expiry-flag"}}
+	c.Request = httptest.NewRequest(http.MethodPut, "/openfeature/v0/manifest/flags/expiry-flag", bytes.NewBuffer(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.UpdateFlag(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var response models.ManifestFlagResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+
+	require.NotNil(t, response.Flag.Expiry)
+	assert.True(t, newExpiry.Equal(*response.Flag.Expiry))
+}
+
+func TestUpdateFlag_ClearExpiry(t *testing.T) {
+	rollout := 100
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			response := models.PostHogFeatureFlag{
+				ID:   6,
+				Key:  "expiry-flag",
+				Name: "Expiry Flag",
+				Tags: []string{"team:core", "expiry:2025-12-31T00:00:00Z"},
+				Filters: models.PostHogFilters{
+					Groups: []models.PostHogFilterGroup{{RolloutPercentage: &rollout}},
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		case http.MethodPatch:
+			var reqBody models.PostHogUpdateFlagRequest
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
+
+			require.NotNil(t, reqBody.Tags)
+			assert.Equal(t, []string{"team:core"}, *reqBody.Tags)
+
+			response := models.PostHogFeatureFlag{
+				ID:   6,
+				Key:  "expiry-flag",
+				Name: "Expiry Flag",
+				Tags: *reqBody.Tags,
+				Filters: models.PostHogFilters{
+					Groups: []models.PostHogFilterGroup{{RolloutPercentage: &rollout}},
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		default:
+			http.Error(w, "unsupported method", http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+
+	handler := setupTestHandler(t, server)
+
+	reqBody := models.UpdateFlagRequest{
+		Expiry: &models.NullableTime{Value: nil},
+	}
+
+	body, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{gin.Param{Key: "key", Value: "expiry-flag"}}
+	c.Request = httptest.NewRequest(http.MethodPut, "/openfeature/v0/manifest/flags/expiry-flag", bytes.NewBuffer(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.UpdateFlag(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var response models.ManifestFlagResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+
+	assert.Nil(t, response.Flag.Expiry)
 }
 
 func TestUpdateFlag_MissingKey(t *testing.T) {
@@ -382,22 +520,22 @@ func TestUpdateFlag_PostHogUpdateError(t *testing.T) {
 
 // TestUpdateFlag_KeyToIDLookup specifically tests that the handler:
 // 1. Receives a flag key in the URL path
-// 2. Looks up the flag by key using GetFeatureFlagByKey 
+// 2. Looks up the flag by key using GetFeatureFlagByKey
 // 3. Uses the numeric ID from the response to update the flag
 // This is critical because PostHog PATCH endpoints require numeric IDs, not keys
 func TestUpdateFlag_KeyToIDLookup(t *testing.T) {
 	rollout := 100
 	requestCount := 0
-	
+
 	// Create mock PostHog server that tracks requests
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount++
-		
+
 		if r.Method == http.MethodGet {
 			// First request: GET by key to find the flag
 			assert.Equal(t, "/api/projects/123/feature_flags/my-test-flag/", r.URL.Path,
 				"GET request should use flag key in URL")
-			
+
 			response := models.PostHogFeatureFlag{
 				ID:     12345, // This is the numeric ID we need
 				Key:    "my-test-flag",
@@ -409,23 +547,23 @@ func TestUpdateFlag_KeyToIDLookup(t *testing.T) {
 					},
 				},
 			}
-			
+
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(response)
-			
+
 		} else if r.Method == http.MethodPatch {
 			// Second request: PATCH using numeric ID
 			assert.Equal(t, "/api/projects/123/feature_flags/12345/", r.URL.Path,
 				"PATCH request should use numeric ID (12345) in URL, not key")
-			
+
 			var reqBody models.PostHogUpdateFlagRequest
 			err := json.NewDecoder(r.Body).Decode(&reqBody)
 			require.NoError(t, err)
-			
+
 			// Verify the update
 			assert.NotNil(t, reqBody.Name)
 			assert.Equal(t, "Updated Name", *reqBody.Name)
-			
+
 			// Send success response
 			response := models.PostHogFeatureFlag{
 				ID:     12345,
@@ -438,7 +576,7 @@ func TestUpdateFlag_KeyToIDLookup(t *testing.T) {
 					},
 				},
 			}
-			
+
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(response)
 		}
@@ -458,7 +596,7 @@ func TestUpdateFlag_KeyToIDLookup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	
+
 	// Important: The URL path contains the flag KEY, not the ID
 	c.Params = gin.Params{gin.Param{Key: "key", Value: "my-test-flag"}}
 	c.Request = httptest.NewRequest(http.MethodPut, "/openfeature/v0/manifest/flags/my-test-flag", bytes.NewBuffer(body))
@@ -468,7 +606,7 @@ func TestUpdateFlag_KeyToIDLookup(t *testing.T) {
 
 	// Verify success
 	assert.Equal(t, http.StatusOK, w.Code)
-	
+
 	// Verify we made both requests (GET by key, then PATCH by ID)
 	assert.Equal(t, 2, requestCount, "Should make 2 requests: GET by key, then PATCH by ID")
 }

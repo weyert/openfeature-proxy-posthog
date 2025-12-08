@@ -134,6 +134,7 @@ func (m *MockPostHogServer) handleCreateFlag(w http.ResponseWriter, r *http.Requ
 		Name:    req.Name,
 		Active:  true,
 		Filters: req.Filters,
+		Tags:    append([]string(nil), req.Tags...),
 	}
 	
 	// Handle deleted field if present (default false)
@@ -184,6 +185,9 @@ func (m *MockPostHogServer) handleUpdateFlag(w http.ResponseWriter, r *http.Requ
 	}
 	if req.Filters != nil {
 		flag.Filters = *req.Filters
+	}
+	if req.Tags != nil {
+		flag.Tags = *req.Tags
 	}
 	// PostHogUpdateFlagRequest doesn't have Deleted field in models.go
 	// if req.Deleted != nil {
