@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -e
+
+# Navigate to project root
+cd "$(dirname "$0")/.."
+
+echo "🐳 Building and running PostHog OpenFeature Proxy with Docker..."
+make docker-build
+echo "🚀 Starting Docker container..."
+make docker-run

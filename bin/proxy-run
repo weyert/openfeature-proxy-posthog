@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -e
+
+# Navigate to project root
+cd "$(dirname "$0")/.."
+
+echo "🚀 Starting PostHog OpenFeature Proxy..."
+make run
