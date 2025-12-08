@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/openfeature/posthog-proxy/internal/config"
@@ -337,4 +338,67 @@ func TestCreateFlag_WeightNormalization(t *testing.T) {
 	handler.CreateFlag(c)
 
 	assert.Equal(t, http.StatusCreated, w.Code)
+}
+
+func TestCreateFlag_WithExpiry(t *testing.T) {
+	expiry := time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+
+		var reqBody models.PostHogCreateFlagRequest
+		err := json.NewDecoder(r.Body).Decode(&reqBody)
+		require.NoError(t, err)
+
+		require.Contains(t, reqBody.Tags, "expiry:2025-12-31T00:00:00Z")
+
+		roll := 100
+		response := models.PostHogFeatureFlag{
+			ID:     10,
+			Key:    reqBody.Key,
+			Name:   reqBody.Name,
+			Active: true,
+			Tags:   reqBody.Tags,
+			Filters: models.PostHogFilters{
+				Groups: []models.PostHogFilterGroup{
+					{RolloutPercentage: &roll},
+				},
+			},
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	handler := setupTestHandler(t, server)
+
+	requestBody := models.CreateFlagRequest{
+		Key:          "expiry-flag",
+		Name:         "Expiry Flag",
+		Type:         models.FlagTypeBoolean,
+		DefaultValue: true,
+		Expiry:       &expiry,
+	}
+
+	body, err := json.Marshal(requestBody)
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openfeature/v0/manifest/flags", bytes.NewBuffer(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.CreateFlag(c)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+
+	var response models.ManifestFlagResponse
+	err = json.Unmarshal(w.Body.Bytes(), &response)
+	require.NoError(t, err)
+
+	require.NotNil(t, response.Flag.Expiry)
+	assert.True(t, expiry.Equal(*response.Flag.Expiry))
 }

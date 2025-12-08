@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/openfeature/posthog-proxy/internal/models"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCRUDFlow(t *testing.T) {
@@ -24,11 +26,13 @@ func TestCRUDFlow(t *testing.T) {
 
 	// --- Step 1: Create Flag ---
 	t.Log("Step 1: Create Flag")
+	expiry := time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC)
 	createReq := models.CreateFlagRequest{
 		Key:          "integration-test-flag",
 		Name:         "Integration Test Flag",
 		Type:         "boolean",
 		DefaultValue: false,
+		Expiry:       &expiry,
 	}
 	createBody, _ := json.Marshal(createReq)
 	resp, err := client.Post(baseURL, "application/json", bytes.NewBuffer(createBody))
@@ -62,6 +66,8 @@ func TestCRUDFlow(t *testing.T) {
 	assert.NotNil(t, foundFlag)
 	assert.Equal(t, "integration-test-flag", foundFlag.Name)
 	assert.Equal(t, "Integration Test Flag", foundFlag.Description)
+	require.NotNil(t, foundFlag.Expiry)
+	assert.True(t, expiry.Equal(*foundFlag.Expiry))
 
 	// --- Step 3: Get Single Flag ---
 	t.Log("Step 3: Get Single Flag")
@@ -77,6 +83,8 @@ func TestCRUDFlow(t *testing.T) {
 	assert.Equal(t, "integration-test-flag", flagResp.Flag.Key)
 	assert.Equal(t, "integration-test-flag", flagResp.Flag.Name)
 	assert.Equal(t, "Integration Test Flag", flagResp.Flag.Description)
+	require.NotNil(t, flagResp.Flag.Expiry)
+	assert.True(t, expiry.Equal(*flagResp.Flag.Expiry))
 
 	// --- Step 4: Update Flag ---
 	t.Log("Step 4: Update Flag")

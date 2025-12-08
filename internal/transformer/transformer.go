@@ -1,9 +1,14 @@
 package transformer
 
 import (
+	"strings"
+	"time"
+
 	"github.com/openfeature/posthog-proxy/internal/config"
 	"github.com/openfeature/posthog-proxy/internal/models"
 )
+
+const expiryTagPrefix = "expiry:"
 
 // PostHogToOpenFeatureManifest transforms PostHog feature flags to OpenFeature manifest format
 func PostHogToOpenFeatureManifest(posthogFlags []models.PostHogFeatureFlag, cfg config.TypeCoercionConfig) models.Manifest {
@@ -32,6 +37,8 @@ func PostHogToOpenFeatureFlag(phFlag models.PostHogFeatureFlag, cfg config.TypeC
 	// Convert variants if any
 	variants := convertPostHogVariants(phFlag, cfg)
 
+	expiry := extractExpiryFromTags(phFlag.Tags)
+
 	// Map PostHog fields to OpenFeature manifest:
 	// - PostHog Key -> OpenFeature Key (machine-readable identifier)
 	// - PostHog Key -> OpenFeature Name (for consistency, same as key)
@@ -44,6 +51,7 @@ func PostHogToOpenFeatureFlag(phFlag models.PostHogFeatureFlag, cfg config.TypeC
 		DefaultValue: defaultValue,
 		Variants:     variants,
 		State:        state,
+		Expiry:       expiry,
 	}
 }
 
@@ -59,12 +67,17 @@ func OpenFeatureToPostHogCreate(req models.CreateFlagRequest, defaultRollout int
 	}
 
 	filters := createPostHogFilters(req)
-	
+
 	// Note: We do NOT store defaultValue in payloads for boolean flags
 	// because PostHog only accepts "true" as a payload key for boolean flags.
 	// Instead, we use rollout_percentage (set in createPostHogFilters):
 	// - defaultValue: true -> rollout_percentage: 100
 	// - defaultValue: false -> rollout_percentage: 0
+
+	var tags []string
+	if req.Expiry != nil {
+		tags = append(tags, formatExpiryTag(*req.Expiry))
+	}
 
 	return models.PostHogCreateFlagRequest{
 		Name:                       name,
@@ -75,6 +88,7 @@ func OpenFeatureToPostHogCreate(req models.CreateFlagRequest, defaultRollout int
 		CreationContext:            "feature_flags",
 		EvaluationRuntime:          "server",
 		Filters:                    filters,
+		Tags:                       tags,
 	}
 }
 
@@ -87,6 +101,11 @@ func OpenFeatureToPostHogUpdate(req models.UpdateFlagRequest, existingFlag *mode
 	if req.Variants != nil {
 		filters := reconcileFilters(req, existingFlag)
 		update.Filters = filters
+	}
+
+	if req.Expiry != nil {
+		newTags := applyExpiryTag(existingFlag.Tags, req.Expiry.TimePtr())
+		update.Tags = &newTags
 	}
 
 	return update
@@ -178,6 +197,42 @@ func convertVariantsToMultivariate(variants map[string]models.Variant) *models.P
 	}
 }
 
+func extractExpiryFromTags(tags []string) *time.Time {
+	for _, tag := range tags {
+		if strings.HasPrefix(tag, expiryTagPrefix) {
+			raw := strings.TrimPrefix(tag, expiryTagPrefix)
+			parsed, err := time.Parse(time.RFC3339, raw)
+			if err == nil {
+				return &parsed
+			}
+		}
+	}
+	return nil
+}
+
+func applyExpiryTag(existing []string, expiry *time.Time) []string {
+	filtered := make([]string, 0, len(existing))
+	for _, tag := range existing {
+		if !strings.HasPrefix(tag, expiryTagPrefix) {
+			filtered = append(filtered, tag)
+		}
+	}
+
+	if expiry != nil {
+		filtered = append(filtered, formatExpiryTag(*expiry))
+	}
+
+	if len(filtered) == 0 {
+		return nil
+	}
+
+	return filtered
+}
+
+func formatExpiryTag(expiry time.Time) string {
+	return expiryTagPrefix + expiry.UTC().Format(time.RFC3339)
+}
+
 // determineFlagTypeAndValue determines the OpenFeature flag type and default value from PostHog flag
 // Uses Chain of Responsibility pattern via TypeDetectionChain
 func determineFlagTypeAndValue(phFlag models.PostHogFeatureFlag, cfg config.TypeCoercionConfig) (models.FlagType, interface{}) {
@@ -194,7 +249,7 @@ func convertPostHogVariants(phFlag models.PostHogFeatureFlag, cfg config.TypeCoe
 		for _, variant := range phFlag.Filters.Multivariate.Variants {
 			weight := variant.RolloutFlag
 			var variantValue interface{} = variant.Key
-			
+
 			// Check if there's a payload for this variant that's a JSON object
 			if phFlag.Filters.Payloads != nil {
 				if payload, exists := phFlag.Filters.Payloads[variant.Key]; exists {
@@ -229,7 +284,7 @@ func convertPostHogVariants(phFlag models.PostHogFeatureFlag, cfg config.TypeCoe
 					variantValue = numericValue
 				}
 			}
-			
+
 			variants[variant.Key] = models.Variant{
 				Value:  variantValue,
 				Weight: &weight,
@@ -242,7 +297,7 @@ func convertPostHogVariants(phFlag models.PostHogFeatureFlag, cfg config.TypeCoe
 	if phFlag.Filters.Payloads != nil {
 		for key, payload := range phFlag.Filters.Payloads {
 			var variantValue interface{} = payload
-			
+
 			// Try to parse as JSON object first
 			if isJSONObject(payload) {
 				if obj, err := parseJSONObject(payload); err == nil {
@@ -265,7 +320,7 @@ func convertPostHogVariants(phFlag models.PostHogFeatureFlag, cfg config.TypeCoe
 				}
 				// If no coercion applied, variantValue remains as the original payload string
 			}
-			
+
 			variants[key] = models.Variant{
 				Value: variantValue,
 			}
@@ -285,14 +340,14 @@ func createPostHogFilters(req models.CreateFlagRequest) models.PostHogFilters {
 	// - defaultValue: true -> rollout_percentage: 100 (enabled for all users)
 	// - defaultValue: false -> rollout_percentage: 0 (disabled for all users)
 	defaultRolloutPercentage := 100
-	
+
 	// Check if this is a boolean flag and adjust rollout based on defaultValue
 	if req.Type == models.FlagTypeBoolean {
 		if boolVal, ok := req.DefaultValue.(bool); ok && !boolVal {
 			defaultRolloutPercentage = 0
 		}
 	}
-	
+
 	filters := models.PostHogFilters{
 		Groups: []models.PostHogFilterGroup{
 			{
@@ -306,13 +361,13 @@ func createPostHogFilters(req models.CreateFlagRequest) models.PostHogFilters {
 	// If there are variants, create multivariate configuration
 	if req.Variants != nil && len(req.Variants) > 0 {
 		variants := make([]models.PostHogVariant, 0, len(req.Variants))
-		
+
 		for key, variant := range req.Variants {
 			weight := 0
 			if variant.Weight != nil {
 				weight = *variant.Weight
 			}
-			
+
 			variants = append(variants, models.PostHogVariant{
 				Key:         key,
 				Name:        key,
@@ -334,13 +389,13 @@ func createPostHogFiltersFromVariants(variants map[string]models.Variant) models
 
 	if len(variants) > 0 {
 		phVariants := make([]models.PostHogVariant, 0, len(variants))
-		
+
 		for key, variant := range variants {
 			weight := 0
 			if variant.Weight != nil {
 				weight = *variant.Weight
 			}
-			
+
 			phVariants = append(phVariants, models.PostHogVariant{
 				Key:         key,
 				Name:        key,

@@ -2,6 +2,7 @@ package transformer
 
 import (
 	"testing"
+	"time"
 
 	"github.com/openfeature/posthog-proxy/internal/config"
 	"github.com/openfeature/posthog-proxy/internal/models"
@@ -96,9 +97,32 @@ func TestPostHogToOpenFeatureFlag(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "Flag with expiry tag",
+			input: models.PostHogFeatureFlag{
+				Key:    "expiry-flag",
+				Name:   "Expiry Flag",
+				Active: true,
+				Tags:   []string{"team:core", "expiry:2025-12-31T00:00:00Z"},
+				Filters: models.PostHogFilters{
+					Groups: []models.PostHogFilterGroup{
+						{Properties: []models.PostHogProperty{}, RolloutPercentage: intPtr(100)},
+					},
+				},
+			},
+			expected: models.ManifestFlag{
+				Key:          "expiry-flag",
+				Name:         "expiry-flag",
+				Description:  "Expiry Flag",
+				Type:         models.FlagTypeBoolean,
+				DefaultValue: true,
+				State:        models.FlagStateEnabled,
+				Expiry:       isoTimePtr("2025-12-31T00:00:00Z"),
+			},
+		},
 	}
 
-		for _, tt := range tests {
+	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := PostHogToOpenFeatureFlag(tt.input, cfg)
 
@@ -113,19 +137,27 @@ func TestPostHogToOpenFeatureFlag(t *testing.T) {
 				require.NotNil(t, result.Variants)
 				assert.Equal(t, len(tt.expected.Variants), len(result.Variants))
 			}
+
+			if tt.expected.Expiry != nil {
+				require.NotNil(t, result.Expiry)
+				assert.True(t, tt.expected.Expiry.Equal(*result.Expiry))
+			} else {
+				assert.Nil(t, result.Expiry)
+			}
 		})
 	}
 }
 
 func TestOpenFeatureToPostHogCreate(t *testing.T) {
 	tests := []struct {
-		name                 string
-		input                models.CreateFlagRequest
-		defaultRollout       int
-		expectedKey          string
-		expectedActive       bool
-		expectedGroupsCount  int
-		expectedHasMultivar  bool
+		name                string
+		input               models.CreateFlagRequest
+		defaultRollout      int
+		expectedKey         string
+		expectedActive      bool
+		expectedGroupsCount int
+		expectedHasMultivar bool
+		expectedTags        []string
 	}{
 		{
 			name: "Simple boolean flag",
@@ -159,6 +191,22 @@ func TestOpenFeatureToPostHogCreate(t *testing.T) {
 			expectedGroupsCount: 1,
 			expectedHasMultivar: true,
 		},
+		{
+			name: "Flag with expiry",
+			input: models.CreateFlagRequest{
+				Key:          "expiry-flag",
+				Name:         "Expiry Flag",
+				Type:         models.FlagTypeBoolean,
+				DefaultValue: true,
+				Expiry:       isoTimePtr("2025-12-31T00:00:00Z"),
+			},
+			defaultRollout:      100,
+			expectedKey:         "expiry-flag",
+			expectedActive:      true,
+			expectedGroupsCount: 1,
+			expectedHasMultivar: false,
+			expectedTags:        []string{"expiry:2025-12-31T00:00:00Z"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -175,6 +223,12 @@ func TestOpenFeatureToPostHogCreate(t *testing.T) {
 			} else {
 				assert.Nil(t, result.Filters.Multivariate)
 			}
+
+			if len(tt.expectedTags) > 0 {
+				assert.Equal(t, tt.expectedTags, result.Tags)
+			} else {
+				assert.Nil(t, result.Tags)
+			}
 		})
 	}
 }
@@ -187,6 +241,7 @@ func TestOpenFeatureToPostHogUpdate(t *testing.T) {
 		expectedName   string
 		expectedActive *bool
 		expectedGroups int
+		expectedTags   []string
 	}{
 		{
 			name: "Update name only",
@@ -238,6 +293,26 @@ func TestOpenFeatureToPostHogUpdate(t *testing.T) {
 			expectedActive: nil,
 			expectedGroups: 1,
 		},
+		{
+			name: "Update expiry",
+			input: models.UpdateFlagRequest{
+				Expiry: nullableTimePtr("2025-12-31T00:00:00Z"),
+			},
+			existingFlag: models.PostHogFeatureFlag{
+				Tags: []string{"team:core"},
+			},
+			expectedTags: []string{"team:core", "expiry:2025-12-31T00:00:00Z"},
+		},
+		{
+			name: "Clear expiry",
+			input: models.UpdateFlagRequest{
+				Expiry: nullableTimeNil(),
+			},
+			existingFlag: models.PostHogFeatureFlag{
+				Tags: []string{"team:core", "expiry:2025-12-31T00:00:00Z"},
+			},
+			expectedTags: []string{"team:core"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -254,6 +329,13 @@ func TestOpenFeatureToPostHogUpdate(t *testing.T) {
 			if tt.expectedGroups > 0 {
 				require.NotNil(t, result.Filters)
 				assert.Equal(t, tt.expectedGroups, len(result.Filters.Groups))
+			}
+
+			if tt.expectedTags != nil {
+				require.NotNil(t, result.Tags)
+				assert.Equal(t, tt.expectedTags, *result.Tags)
+			} else {
+				assert.Nil(t, result.Tags)
 			}
 		})
 	}
@@ -382,4 +464,21 @@ func TestConvertPostHogVariants(t *testing.T) {
 			}
 		})
 	}
+}
+
+func isoTimePtr(value string) *time.Time {
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		panic(err)
+	}
+	return &parsed
+}
+
+func nullableTimePtr(value string) *models.NullableTime {
+	parsed := isoTimePtr(value)
+	return &models.NullableTime{Value: parsed}
+}
+
+func nullableTimeNil() *models.NullableTime {
+	return &models.NullableTime{Value: nil}
 }
