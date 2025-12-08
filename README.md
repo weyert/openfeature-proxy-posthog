@@ -12,6 +12,11 @@ A Go-based proxy service that enables PostHog feature flag management through th
 - ✅ Environment-based configuration
 - ✅ `direnv` support for local development
 
+### Manifest metadata tags
+
+The proxy automatically whitelists the `created`, `domain`, `owner`, `type`, and `lifetime` manifest metadata keys and syncs them to PostHog tags using the `key:value` format.
+When you create or update a flag that includes these metadata entries, the proxy adds the corresponding tags (for example `owner:platform-team`) to the PostHog flag and restores them when reading the manifest.
+
 ## Quick Start
 
 ### Prerequisites

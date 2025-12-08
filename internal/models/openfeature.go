@@ -23,6 +23,7 @@ type ManifestFlag struct {
 	Variants     map[string]Variant `json:"variants,omitempty"`
 	State        FlagState          `json:"state"`
 	Expiry       *time.Time         `json:"expiry,omitempty"`
+	Metadata     map[string]string  `json:"metadata,omitempty"`
 }
 
 // FlagType represents the type of a feature flag
@@ -58,6 +59,7 @@ type CreateFlagRequest struct {
 	DefaultValue interface{}        `json:"defaultValue" binding:"required"`
 	Variants     map[string]Variant `json:"variants,omitempty"`
 	Expiry       *time.Time         `json:"expiry,omitempty"`
+	Metadata     map[string]string  `json:"metadata,omitempty"`
 }
 
 // UpdateFlagRequest represents a request to update a feature flag
@@ -69,6 +71,7 @@ type UpdateFlagRequest struct {
 	Variants     *map[string]Variant `json:"variants,omitempty"`
 	State        *FlagState          `json:"state,omitempty"`
 	Expiry       *NullableTime       `json:"expiry,omitempty"`
+	Metadata     *map[string]string  `json:"metadata,omitempty"`
 }
 
 // UnmarshalJSON allows distinguishing between missing and explicit null expiry values.
@@ -80,6 +83,7 @@ func (r *UpdateFlagRequest) UnmarshalJSON(data []byte) error {
 		DefaultValue interface{}         `json:"defaultValue,omitempty"`
 		Variants     *map[string]Variant `json:"variants,omitempty"`
 		State        *FlagState          `json:"state,omitempty"`
+		Metadata     *map[string]string  `json:"metadata,omitempty"`
 	}
 
 	var aux struct {
@@ -97,6 +101,7 @@ func (r *UpdateFlagRequest) UnmarshalJSON(data []byte) error {
 	r.DefaultValue = aux.DefaultValue
 	r.Variants = aux.Variants
 	r.State = aux.State
+	r.Metadata = aux.Metadata
 
 	if aux.Expiry != nil {
 		if string(aux.Expiry) == "null" {

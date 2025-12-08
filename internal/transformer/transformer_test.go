@@ -120,6 +120,35 @@ func TestPostHogToOpenFeatureFlag(t *testing.T) {
 				Expiry:       isoTimePtr("2025-12-31T00:00:00Z"),
 			},
 		},
+		{
+			name: "Flag with metadata tags",
+			input: models.PostHogFeatureFlag{
+				Key:    "metadata-flag",
+				Name:   "Metadata Flag",
+				Active: true,
+				Tags:   []string{"owner:platform-team", "domain:platform"},
+				Filters: models.PostHogFilters{
+					Groups: []models.PostHogFilterGroup{
+						{
+							Properties:        []models.PostHogProperty{},
+							RolloutPercentage: intPtr(100),
+						},
+					},
+				},
+			},
+			expected: models.ManifestFlag{
+				Key:          "metadata-flag",
+				Name:         "metadata-flag",
+				Description:  "Metadata Flag",
+				Type:         models.FlagTypeBoolean,
+				DefaultValue: true,
+				State:        models.FlagStateEnabled,
+				Metadata: map[string]string{
+					"domain": "platform",
+					"owner":  "platform-team",
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -143,6 +172,12 @@ func TestPostHogToOpenFeatureFlag(t *testing.T) {
 				assert.True(t, tt.expected.Expiry.Equal(*result.Expiry))
 			} else {
 				assert.Nil(t, result.Expiry)
+			}
+
+			if tt.expected.Metadata != nil {
+				assert.Equal(t, tt.expected.Metadata, result.Metadata)
+			} else {
+				assert.Nil(t, result.Metadata)
 			}
 		})
 	}
@@ -206,6 +241,30 @@ func TestOpenFeatureToPostHogCreate(t *testing.T) {
 			expectedGroupsCount: 1,
 			expectedHasMultivar: false,
 			expectedTags:        []string{"expiry:2025-12-31T00:00:00Z"},
+		},
+		{
+			name: "Flag with metadata and expiry tags",
+			input: models.CreateFlagRequest{
+				Key:          "metadata-create",
+				Name:         "Metadata Create",
+				Type:         models.FlagTypeBoolean,
+				DefaultValue: true,
+				Expiry:       isoTimePtr("2026-01-01T00:00:00Z"),
+				Metadata: map[string]string{
+					"domain": "platform",
+					"owner":  "platform-team",
+				},
+			},
+			defaultRollout:      100,
+			expectedKey:         "metadata-create",
+			expectedActive:      true,
+			expectedGroupsCount: 1,
+			expectedHasMultivar: false,
+			expectedTags: []string{
+				"domain:platform",
+				"owner:platform-team",
+				"expiry:2026-01-01T00:00:00Z",
+			},
 		},
 	}
 
@@ -312,6 +371,30 @@ func TestOpenFeatureToPostHogUpdate(t *testing.T) {
 				Tags: []string{"team:core", "expiry:2025-12-31T00:00:00Z"},
 			},
 			expectedTags: []string{"team:core"},
+		},
+		{
+			name: "Update metadata adds tags",
+			input: models.UpdateFlagRequest{
+				Metadata: &map[string]string{
+					"domain": "platform",
+					"owner":  "platform-team",
+				},
+			},
+			existingFlag: models.PostHogFeatureFlag{
+				Tags: []string{"team:core"},
+			},
+			expectedTags: []string{"team:core", "domain:platform", "owner:platform-team"},
+		},
+
+		{
+			name: "Clear metadata tags",
+			input: models.UpdateFlagRequest{
+				Metadata: &map[string]string{},
+			},
+			existingFlag: models.PostHogFeatureFlag{
+				Tags: []string{"owner:platform-team", "domain:platform", "expiry:2025-12-31T00:00:00Z"},
+			},
+			expectedTags: []string{"expiry:2025-12-31T00:00:00Z"},
 		},
 	}
 

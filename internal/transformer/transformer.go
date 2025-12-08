@@ -1,6 +1,7 @@
 package transformer
 
 import (
+	"sort"
 	"strings"
 	"time"
 
@@ -9,6 +10,14 @@ import (
 )
 
 const expiryTagPrefix = "expiry:"
+
+var metadataTagWhitelist = map[string]struct{}{
+	"created":  {},
+	"domain":   {},
+	"owner":    {},
+	"type":     {},
+	"lifetime": {},
+}
 
 // PostHogToOpenFeatureManifest transforms PostHog feature flags to OpenFeature manifest format
 func PostHogToOpenFeatureManifest(posthogFlags []models.PostHogFeatureFlag, cfg config.TypeCoercionConfig) models.Manifest {
@@ -38,6 +47,7 @@ func PostHogToOpenFeatureFlag(phFlag models.PostHogFeatureFlag, cfg config.TypeC
 	variants := convertPostHogVariants(phFlag, cfg)
 
 	expiry := extractExpiryFromTags(phFlag.Tags)
+	metadata := extractMetadataFromTags(phFlag.Tags)
 
 	// Map PostHog fields to OpenFeature manifest:
 	// - PostHog Key -> OpenFeature Key (machine-readable identifier)
@@ -52,6 +62,7 @@ func PostHogToOpenFeatureFlag(phFlag models.PostHogFeatureFlag, cfg config.TypeC
 		Variants:     variants,
 		State:        state,
 		Expiry:       expiry,
+		Metadata:     metadata,
 	}
 }
 
@@ -74,9 +85,12 @@ func OpenFeatureToPostHogCreate(req models.CreateFlagRequest, defaultRollout int
 	// - defaultValue: true -> rollout_percentage: 100
 	// - defaultValue: false -> rollout_percentage: 0
 
-	var tags []string
+	tags := metadataToTags(req.Metadata)
 	if req.Expiry != nil {
 		tags = append(tags, formatExpiryTag(*req.Expiry))
+	}
+	if len(tags) == 0 {
+		tags = nil
 	}
 
 	return models.PostHogCreateFlagRequest{
@@ -103,9 +117,24 @@ func OpenFeatureToPostHogUpdate(req models.UpdateFlagRequest, existingFlag *mode
 		update.Filters = filters
 	}
 
+	tagsToUpdate := existingFlag.Tags
+	tagsUpdated := false
+
+	if req.Metadata != nil {
+		tagsToUpdate = applyMetadataTags(tagsToUpdate, *req.Metadata)
+		tagsUpdated = true
+	}
+
 	if req.Expiry != nil {
-		newTags := applyExpiryTag(existingFlag.Tags, req.Expiry.TimePtr())
-		update.Tags = &newTags
+		tagsToUpdate = applyExpiryTag(tagsToUpdate, req.Expiry.TimePtr())
+		tagsUpdated = true
+	}
+
+	if tagsUpdated {
+		if len(tagsToUpdate) == 0 {
+			tagsToUpdate = nil
+		}
+		update.Tags = &tagsToUpdate
 	}
 
 	return update
@@ -231,6 +260,104 @@ func applyExpiryTag(existing []string, expiry *time.Time) []string {
 
 func formatExpiryTag(expiry time.Time) string {
 	return expiryTagPrefix + expiry.UTC().Format(time.RFC3339)
+}
+
+func metadataToTags(metadata map[string]string) []string {
+	if len(metadata) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(metadata))
+	for key := range metadata {
+		if _, allowed := metadataTagWhitelist[key]; allowed {
+			keys = append(keys, key)
+		}
+	}
+
+	if len(keys) == 0 {
+		return nil
+	}
+
+	sort.Strings(keys)
+	tags := make([]string, 0, len(keys))
+	for _, key := range keys {
+		value := strings.TrimSpace(metadata[key])
+		if value == "" {
+			continue
+		}
+		tags = append(tags, key+":"+value)
+	}
+
+	if len(tags) == 0 {
+		return nil
+	}
+
+	return tags
+}
+
+func applyMetadataTags(existing []string, metadata map[string]string) []string {
+	filtered := filterOutMetadataTags(existing)
+	metadataTags := metadataToTags(metadata)
+
+	if len(metadataTags) == 0 {
+		if len(filtered) == 0 {
+			return nil
+		}
+		return filtered
+	}
+
+	return append(filtered, metadataTags...)
+}
+
+func filterOutMetadataTags(tags []string) []string {
+	if len(tags) == 0 {
+		return nil
+	}
+
+	filtered := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if !isMetadataTag(tag) {
+			filtered = append(filtered, tag)
+		}
+	}
+
+	if len(filtered) == 0 {
+		return nil
+	}
+
+	return filtered
+}
+
+func isMetadataTag(tag string) bool {
+	for key := range metadataTagWhitelist {
+		if strings.HasPrefix(tag, key+":") {
+			return true
+		}
+	}
+	return false
+}
+
+func extractMetadataFromTags(tags []string) map[string]string {
+	if len(tags) == 0 {
+		return nil
+	}
+
+	metadata := make(map[string]string)
+	for _, tag := range tags {
+		for key := range metadataTagWhitelist {
+			prefix := key + ":"
+			if strings.HasPrefix(tag, prefix) {
+				metadata[key] = strings.TrimPrefix(tag, prefix)
+				break
+			}
+		}
+	}
+
+	if len(metadata) == 0 {
+		return nil
+	}
+
+	return metadata
 }
 
 // determineFlagTypeAndValue determines the OpenFeature flag type and default value from PostHog flag
