@@ -16,7 +16,10 @@ before:
     # - go generate ./...
 
 builds:
-  - env:
+  - id: openfeature-proxy-posthog
+    main: ./cmd/server
+    binary: openfeature-proxy-posthog
+    env:
       - CGO_ENABLED=0
     goos:
       - linux
