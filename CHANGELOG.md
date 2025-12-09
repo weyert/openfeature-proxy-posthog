@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.0](https://github.com/weyert/openfeature-proxy-posthog/compare/v1.1.0...v1.2.0) (2025-12-09)
+
+
+### Features
+
+* attempt to resolve goreleaser issue ([8ab6349](https://github.com/weyert/openfeature-proxy-posthog/commit/8ab634976e5aeb4b22f9309aa2a5bef3f49a3330))
+
+
+### Bug Fixes
+
+* resolve goreleaser configuration issue ([d48b859](https://github.com/weyert/openfeature-proxy-posthog/commit/d48b859190da7ec82fcd42726e49247a528a6d91))
+* resolve issues with goreleaser configuration file ([78b3fa1](https://github.com/weyert/openfeature-proxy-posthog/commit/78b3fa105bc5e8a9156bdf345849655e6c83ba54))
+
 ## [1.1.0](https://github.com/weyert/openfeature-proxy-posthog/compare/v1.0.0...v1.1.0) (2025-12-08)
 
 
